@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Guimafa Bank</title>
+<link rel="icon" href="/guimafa-logo.png">
+<link rel="stylesheet" href="/styles.css">
+
+</head>
+<body>
+<header>
+  <div class="brand" onclick="logoClick()" title="Ouvrir mon compte">
+    <img src="/guimafa-logo.png" alt="Guimafa Bank">
+  </div>
+</header>
+<div class="wrap" id="app"></div>
+<div class="foot">GUIMAFA · SECURE BANKING</div>
+
+<script>
+const $ = s => document.querySelector(s);
+let db = JSON.parse(localStorage.getItem('guimafa_db') || '{"accounts":{},"tx":{}}');
+let cur = localStorage.getItem('guimafa_cur') || '';
+let view = cur ? 'locked' : 'auth', svc = null, authTab = 'signin', notice = null;
+
+const save = () => { localStorage.setItem('guimafa_db', JSON.stringify(db)); localStorage.setItem('guimafa_cur', cur); };
+const r2 = n => Math.round(n * 100) / 100;
+const fmt = n => '₦' + Number(n || 0).toLocaleString('en-NG', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const stamp = () => new Date().toLocaleString('fr-FR', {day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit'});
+const me = () => db.accounts[cur];
+const amtOf = v => r2(parseFloat(v.amt));
+const findAcct = k => db.accounts[k] || Object.values(db.accounts).find(x => x.phone === k);
+db.pending = db.pending || {};
+function addTx(num, t){ (db.tx[num] = db.tx[num] || []).unshift({...t, date: stamp()}); }
+function newNumber(){
+  let n; do { n = '20' + String(Math.floor(Math.random() * 1e8)).padStart(8, '0'); } while (db.accounts[n]);
+  return n;
+}
+function setNotice(type, text){ notice = {type, text}; }
+function noticeHTML(){
+  if (!notice) return '';
+  const h = `<div class="msg ${notice.type}">${esc(notice.text)}</div>`;
+  notice = null; return h;
+}
+function go(v){ view = v; render(); }
+function debit(a, amt, title, note){
+  if (!(amt > 0)) return 'Montant invalide.';
+  if (amt > a.bal) return 'Solde insuffisant.';
+  a.bal = r2(a.bal - amt);
+  addTx(a.num, {title, amt, dir: 'out', note});
+  return null;
+}
+function credit(a, amt, title, note){
+  a.bal = r2(a.bal + amt);
+  addTx(a.num, {title, amt, dir: 'in', note});
+}
+
+/* ---------- SERVICES ---------- */
+const PLANS_DATA = [['500','1 GB · ₦500'],['1000','2.5 GB · ₦1 000'],['2000','6 GB · ₦2 000'],['5000','15 GB · ₦5 000'],['10000','40 GB · ₦10 000']];
+const PLANS_TV = [['2500','Compact · ₦2 500'],['4400','Compact+ · ₦4 400'],['7000','Premium · ₦7 000']];
+const NETS = [['MTN','MTN'],['Airtel','Airtel'],['Glo','Glo'],['9mobile','9mobile'],['orangemoney','orangemoney'],['Smile','Smile'],['Spectranet','Spectranet'],['Swift','Swift']];
+const BANKS = ['Access Bank','GTBank','First Bank','Zenith Bank','UBA','Opay','Kuda','Autre','Karako'].map(b => [b, b]);
+
+const SERVICES = [
+  {id:'guimafa', icon:'G', label:'Guimafa', title:'Transfert Guimafa', sub:'Envoyer à un compte Guimafa (crédit instantané)', btn:'Envoyer', fields:[
+    {n:'to', l:'Numéro de compte ou téléphone', ph:'20xxxxxxxx ou 08012345678'},
+    {n:'amt', l:'Montant (₦)', t:'number'},
+    {n:'note', l:'Motif (optionnel)'}]},
+  {id:'bank', icon:'🏦', label:'Banque', title:'Transfert bancaire', sub:'Envoyer vers une autre banque', btn:'Envoyer', fields:[
+    {n:'bank', l:'Banque', opts:[['Guimafa Bank','Guimafa Bank'], ...BANKS]},
+    {n:'to', l:'Numéro de compte ou téléphone', ph:'20xxxxxxxx ou 08012345678'},
+    {n:'amt', l:'Montant (₦)', t:'number'},
+    {n:'note', l:'Motif (optionnel)'}]},
+  {id:'airtime', icon:'📱', label:'Airtime', title:'Recharge crédit', sub:'Recharger le téléphone', btn:'Recharger', fields:[
+    {n:'net', l:'Réseau', opts:NETS},
+    {n:'phone', l:'Numéro de téléphone', ph:'08012345678'},
+    {n:'amt', l:'Montant (₦, min 50)', t:'number'}]},
+  {id:'data', icon:'📶', label:'Data', title:'Forfait data', sub:'Acheter un forfait internet', btn:'Acheter', fields:[
+    {n:'net', l:'Réseau', opts:NETS},
+    {n:'phone', l:'Numéro de téléphone', ph:'08012345678'},
+    {n:'plan', l:'Forfait', opts:PLANS_DATA}]},
+  {id:'tv', icon:'📺', label:'TV', title:'Abonnement TV', sub:'Payer votre abonnement TV', btn:'Payer', fields:[
+    {n:'prov', l:'Fournisseur', opts:[['DStv','DStv'],['GOtv','GOtv'],['Startimes','Startimes'],['MyTV','MyTV'],['Canal+','Canal+'],['StarSat','StarSat'],['Kwese','Kwese']]},
+    {n:'card', l:'Numéro de carte / IUC', ph:'Numéro de carte'},
+    {n:'plan', l:'Forfait', opts:PLANS_TV}]},
+  {id:'bills', icon:'⚡', label:'Électricité', title:'Facture électricité', sub:'Recharger votre compteur', btn:'Payer', fields:[
+    {n:'co', l:'Distributeur', opts:[['Ikeja Electric','Ikeja Electric'],['Eko Electric','Eko Electric'],['Abuja Electric','Abuja Electric'],['Port Harcourt Electric','Port Harcourt Electric']]},
+    {n:'meter', l:'Numéro de compteur', ph:'Numéro de compteur'},
+    {n:'amt', l:'Montant (₦)', t:'number'}]},
+  {id:'save', icon:'💰', label:'Épargne', title:'Épargne', sub:'Mettre de côté ou retirer de votre épargne', btn:'Valider', fields:[
+    {n:'act', l:'Action', opts:[['deposit','Mettre de côté'],['withdraw','Retirer vers mon compte']]},
+    {n:'pot', l:'Nom de l\u2019épargne', ph:'Ex : Urgence, Tontine'},
+    {n:'amt', l:'Montant (₦)', t:'number'}]},
+  {id:'loan', icon:'🤝', label:'Prêt', title:'Prêt rapide', sub:'Maximum ₦200 000 · intérêt 10 %', btn:'Demander', fields:[
+    {n:'amt', l:'Montant (₦, max 200 000)', t:'number'},
+    {n:'tenor', l:'Durée', opts:[['7','7 jours'],['30','30 jours']]}]},
+  {id:'betting', icon:'⚽', label:'Paris', title:'Paris sportifs', sub:'Alimenter votre compte de paris', btn:'Alimenter', fields:[
+    {n:'site', l:'Site', opts:[['Bet9ja','Bet9ja'],['SportyBet','SportyBet'],['1xBet','1xBet'],['BetKing','BetKing']]},
+    {n:'uid', l:'Identifiant de compte', ph:'Votre identifiant'},
+    {n:'amt', l:'Montant (₦)', t:'number'}]},
+  {id:'fund', icon:'➕', label:'Ajouter', title:'Ajouter de l\u2019argent', sub:'Recharger votre compte Guimafa', btn:'Ajouter', fields:[
+    {n:'amt', l:'Montant (₦)', t:'number'}]},
+];
+
+const RUN = {
+  guimafa(a, v){
+    const amt = amtOf(v), to = (v.to || '').trim();
+    if (!/^\d{10,11}$/.test(to)) return {err:'Numéro invalide (compte à 10 chiffres ou téléphone).'};
+    const rc = findAcct(to);
+    if (rc && rc.num === a.num) return {err:'Vous ne pouvez pas vous envoyer de l\u2019argent.'};
+    const e = debit(a, amt, `Envoyé à ${rc ? rc.name : to}`, v.note || 'Transfert');
+    if (e) return {err:e};
+    if (rc){
+      credit(rc, amt, `Reçu de ${a.name}`, v.note || 'Transfert');
+      return {ok:`${fmt(amt)} envoyés à ${rc.name}. Son solde est crédité.`};
+    }
+    (db.pending[to] = db.pending[to] || []).push({amt, from: a.name, note: v.note || 'Transfert', date: stamp()});
+    return {ok:`${fmt(amt)} envoyés au ${to}. Le destinataire recevra l\u2019argent dès qu\u2019il ouvrira un compte avec ce numéro.`};
+  },
+  bank(a, v){
+    const amt = amtOf(v), to = (v.to || '').trim();
+    if (!/^\d{10,11}$/.test(to)) return {err:'Numéro invalide (compte à 10 chiffres ou téléphone).'};
+    const rc = findAcct(to);
+    const e = debit(a, amt, `Envoyé à ${v.bank} · ${to}`, v.note || 'Transfert');
+    if (e) return {err:e};
+    if (rc){
+      credit(rc, amt, `Reçu de ${a.name}`, v.note || 'Transfert');
+    } else {
+      (db.pending[to] = db.pending[to] || []).push({amt, from: a.name, note: v.note || 'Transfert', date: stamp()});
+    }
+    return {ok:`${fmt(amt)} envoyés vers ${v.bank} (${to}).`};
+  },
+  airtime(a, v){
+    const amt = amtOf(v);
+    if (!(amt >= 50)) return {err:'Montant minimum : ₦50.'};
+    const e = debit(a, amt, `Airtime ${v.net}`, v.phone);
+    if (e) return {err:e};
+    return {ok:`Recharge de ${fmt(amt)} envoyée au ${v.phone} (${v.net}).`};
+  },
+  data(a, v){
+    const amt = Number(v.plan);
+    const e = debit(a, amt, `Data ${v.net}`, v.phone);
+    if (e) return {err:e};
+    return {ok:`Forfait data ${fmt(amt)} activé sur ${v.phone} (${v.net}).`};
+  },
+  tv(a, v){
+    const amt = Number(v.plan);
+    const e = debit(a, amt, `TV ${v.prov}`, v.card);
+    if (e) return {err:e};
+    return {ok:`Abonnement ${v.prov} payé (${fmt(amt)}).`};
+  },
+  bills(a, v){
+    const amt = amtOf(v);
+    const e = debit(a, amt, `Électricité · ${v.co}`, v.meter);
+    if (e) return {err:e};
+    return {ok:`${fmt(amt)} payés pour le compteur ${v.meter}.`};
+  },
+  save(a, v){
+    const amt = amtOf(v), name = (v.pot || '').trim() || 'Épargne';
+    a.pots = a.pots || {};
+    if (v.act === 'deposit'){
+      const e = debit(a, amt, `Épargne : ${name}`, 'Mise de côté');
+      if (e) return {err:e};
+      a.pots[name] = r2((a.pots[name] || 0) + amt);
+      return {ok:`${fmt(amt)} mis de côté dans « ${name} ».`};
+    }
+    if ((a.pots[name] || 0) < amt) return {err:'Solde d\u2019épargne insuffisant.'};
+    a.pots[name] = r2(a.pots[name] - amt);
+    credit(a, amt, `Retrait épargne : ${name}`, 'Épargne');
+    return {ok:`${fmt(amt)} retirés de « ${name} ».`};
+  },
+  loan(a, v){
+    if (a.loan) return {err:'Vous avez déjà un prêt en cours.'};
+    const amt = amtOf(v);
+    if (!(amt > 0) || amt > 200000) return {err:'Montant entre ₦1 et ₦200 000.'};
+    a.loan = {amount: amt, due: r2(amt * 1.1), tenor: v.tenor};
+    credit(a, amt, 'Prêt reçu', 'Prêt Guimafa');
+    return {ok:`Prêt de ${fmt(amt)} crédité. À rembourser : ${fmt(a.loan.due)}.`};
+  },
+  betting(a, v){
+    const amt = amtOf(v);
+    const e = debit(a, amt, `Paris · ${v.site}`, v.uid);
+    if (e) return {err:e};
+    return {ok:`${fmt(amt)} envoyés sur ${v.site} (compte ${v.uid}).`};
+  },
+  fund(a, v){
+    const amt = amtOf(v);
+    if (!(amt > 0)) return {err:'Montant invalide.'};
+    credit(a, amt, 'Ajout d\u2019argent', 'Dépôt');
+    return {ok:`${fmt(amt)} ajoutés à votre compte.`};
+  },
+};
+
+/* ---------- AUTH & LOCK ---------- */
+function logoClick(){
+  if (!cur) view = 'auth';
+  else if (view === 'dash' || view === 'svc') view = 'dash';
+  else view = 'locked';
+  render();
+}
+function setAuth(t){ authTab = t; render(); }
+function signIn(e){
+  e.preventDefault();
+  const f = new FormData(e.target), phone = f.get('phone').trim();
+  const a = Object.values(db.accounts).find(x => x.phone === phone);
+  if (!a || a.pin !== f.get('pin')) { setNotice('bad', 'Numéro ou code PIN incorrect.'); return render(); }
+  cur = a.num; view = 'dash'; save(); render();
+}
+function openAccount(e){
+  e.preventDefault();
+  const f = new FormData(e.target), name = f.get('name').trim(), phone = f.get('phone').trim(), pin = f.get('pin');
+  if (!/^\d{4}$/.test(pin)) { setNotice('bad', 'Le code PIN doit contenir 4 chiffres.'); return render(); }
+  if (Object.values(db.accounts).some(x => x.phone === phone)) { setNotice('bad', 'Un compte existe déjà avec ce numéro.'); return render(); }
+  const num = newNumber();
+  db.accounts[num] = {num, name, phone, pin, bal: 0, pots: {}, loan: null};
+  addTx(num, {title: 'Compte ouvert', amt: 0, dir: 'in', note: 'Bienvenue chez Guimafa'});
+  const acc = db.accounts[num];
+  (db.pending[phone] || []).forEach(p => credit(acc, p.amt, `Reçu de ${p.from}`, p.note));
+  delete db.pending[phone];
+  cur = num; view = 'dash'; save(); render();
+}
+function pinSubmit(e){
+  e.preventDefault();
+  const pin = new FormData(e.target).get('pin');
+  if (pin !== me().pin) { setNotice('bad', 'Code PIN incorrect.'); return render(); }
+  view = 'dash'; render();
+}
+function lock(){ view = 'locked'; render(); }
+function signOut(){ cur = ''; view = 'auth'; save(); render(); }
+
+/* ---------- SERVICE ACTIONS ---------- */
+function openSvc(id){ svc = id; view = 'svc'; render(); }
+function svcSubmit(e, id){
+  e.preventDefault();
+  const v = Object.fromEntries(new FormData(e.target));
+  const a = me();
+  const res = RUN[id](a, v);
+  if (res.err){ setNotice('bad', res.err); }
+  else { save(); setNotice('ok', res.ok); view = 'dash'; }
+  render();
+}
+function repayLoan(){
+  const a = me();
+  if (!a.loan) return;
+  const e = debit(a, a.loan.due, 'Remboursement de prêt', 'Prêt Guimafa');
+  if (e) setNotice('bad', e);
+  else { a.loan = null; setNotice('ok', 'Prêt remboursé.'); save(); }
+  render();
+}
+function withdrawPot(name){
+  const a = me(), amt = a.pots[name];
+  if (!amt) return;
+  a.pots[name] = 0;
+  credit(a, amt, `Retrait épargne : ${name}`, 'Épargne');
+  setNotice('ok', `${fmt(amt)} retirés de « ${name} ».`);
+  save(); render();
+}
+
+/* ---------- VIEWS ---------- */
+function formHTML(id){
+  const s = SERVICES.find(x => x.id === id);
+  return `<form onsubmit="svcSubmit(event,'${id}')">
+    ${s.fields.map(f => f.opts
+      ? `<label>${f.l}</label><select name="${f.n}">${f.opts.map(([v,t]) => `<option value="${v}">${esc(t)}</option>`).join('')}</select>`
+      : `<label>${f.l}</label><input name="${f.n}" type="${f.t || 'text'}" ${f.t === 'number' ? 'min="1" step="0.01"' : ''} ${f.max ? `maxlength="${f.max}"` : ''} placeholder="${esc(f.ph || '')}" ${f.n === 'note' ? '' : 'required'}>`
+    ).join('')}
+    <button class="btn">${s.btn}</button>
+  </form>`;
+}
+function pinView(){
+  const a = me();
+  return `
+    <div class="card">
+      <h2>Bonjour, ${esc(a.name.split(' ')[0])}</h2>
+      <p class="sub">Entrez votre code PIN pour ouvrir votre compte.</p>
+      <form onsubmit="pinSubmit(event)">
+        <label>Code PIN</label>
+        <input name="pin" type="password" inputmode="numeric" maxlength="4" required autofocus>
+        <button class="btn">Ouvrir</button>
+      </form>
+      <button class="btn ghost" onclick="signOut()">Changer de compte</button>
+    </div>`;
+}
+function authView(){
+  const signin = authTab === 'signin';
+  return `
+    <div class="card">
+      <div class="tabs">
+        <button class="${signin ? 'on' : ''}" onclick="setAuth('signin')">Connexion</button>
+        <button class="${!signin ? 'on' : ''}" onclick="setAuth('open')">Ouvrir un compte</button>
+        
+      </div>
+      <div style="margin-top:18px">
+      ${signin ? `
+        <h2>Bienvenue</h2>
+        <p class="sub">Connectez-vous avec votre numéro et votre code PIN.</p>
+        <form onsubmit="signIn(event)">
+          <label>Numéro de téléphone</label><input name="phone" inputmode="numeric" required placeholder="08012345678">
+          <label>Code PIN (4 chiffres)</label><input name="pin" type="password" inputmode="numeric" maxlength="4" required>
+          <button class="btn">Se connecter</button>
+        </form>` : `
+        <h2>Ouvrir un compte Guimafa</h2>
+        <p class="sub">Votre numéro de compte à 10 chiffres est créé immédiatement.</p>
+        <form onsubmit="openAccount(event)">
+          <label>Nom complet</label><input name="name" required placeholder="Moustapha Amadou Kallo">
+          <label>Numéro de téléphone</label><input name="phone" inputmode="numeric" required placeholder="08012345678">
+          <label>Créez un code PIN (4 chiffres)</label><input name="pin" type="password" inputmode="numeric" maxlength="4" required>
+          <button class="btn">Ouvrir le compte</button>
+        </form>`}
+      </div>
+    </div>`;
+}
+function dashView(a){
+  return `
+    <div class="card">
+      <div class="acct">${esc(a.name)}</div>
+      <div class="bal">${fmt(a.bal)}</div>
+      <div class="acct">N° de compte : <b style="color:var(--g)">${a.num}</b></div>
+      <button class="btn ghost" onclick="lock()" style="margin-top:14px">Verrouiller</button>
+    </div>
+    <div class="grid">
+      ${SERVICES.map(s => `<button class="svc" onclick="openSvc('${s.id}')"><span>${s.id === 'guimafa' ? '<img class="service-logo" src="/guimafa-logo.png" alt="">' : s.icon}</span>${s.label}</button>`).join('')}
+    </div>
+    <div class="card"><h3>Activité récente</h3>${txList(a.num)}</div>`;
+}
+function txList(num){
+  const list = db.tx[num] || [];
+  if (!list.length) return '<p class="sub">Aucune transaction.</p>';
+  return list.slice(0, 30).map(t => `
+    <div class="tx">
+      <div><b>${esc(t.title)}</b><small>${esc(t.note || '')} · ${t.date}</small></div>
+      <div class="amt ${t.dir === 'in' ? 'in' : 'out'}">${t.dir === 'in' ? '+' : '−'}${fmt(t.amt)}</div>
+    </div>`).join('');
+}
+function svcView(a){
+  const s = SERVICES.find(x => x.id === svc);
+  let extra = '';
+  if (svc === 'save'){
+    const pots = Object.entries(a.pots || {});
+    extra = `<div class="card"><h3>Mes épargnes</h3>${pots.length
+      ? pots.map(([k, v]) => `<div class="row"><span><b>${esc(k)}</b></span><span>${fmt(v)} <button class="back" onclick="withdrawPot('${esc(k).replace(/'/g, '&#39;')}')">Retirer</button></span></div>`).join('')
+      : '<p class="sub">Aucune épargne pour le moment.</p>'}</div>`;
+  }
+  if (svc === 'loan'){
+    extra = a.loan
+      ? `<div class="card"><h3>Prêt en cours</h3><p class="sub">Montant reçu : ${fmt(a.loan.amount)}</p><p class="sub">À rembourser : <b>${fmt(a.loan.due)}</b></p><button class="btn" onclick="repayLoan()">Rembourser</button></div>`
+      : '';
+  }
+  return `
+    <div style="margin-bottom:12px"><span class="back" onclick="go('dash')">← Retour</span></div>
+    <div class="card">
+      <h2>${s.title}</h2>
+      <p class="sub">${s.sub}</p>
+      <p class="sub">Solde disponible : <b>${fmt(a.bal)}</b></p>
+      ${formHTML(svc)}
+    </div>${extra}`;
+}
+
+function render(){
+  if (cur && !me()){ cur = ''; save(); }
+  const a = me();
+  let html;
+  if (!a) html = authView();
+  else if (view === 'locked') html = pinView();
+  else if (view === 'svc') html = svcView(a);
+  else html = dashView(a);
+  $('#app').innerHTML = noticeHTML() + html;
+}
+
+render();
+</script>
+</body>
+</html>

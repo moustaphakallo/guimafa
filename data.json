@@ -1,0 +1,64 @@
+{
+  "accounts": [
+    {
+      "id": "acc-guimafa-001",
+      "name": "Moustapha Amadou Kallo",
+      "accountNumber": "240120001",
+      "balance": 1256650,
+      "currency": "NGN",
+      "phone": "07075792596",
+      "pin": "1234"
+    },
+    {
+      "id": "acc-guimafa-002",
+      "name": "Aisha Bello",
+      "accountNumber": "240120002",
+      "balance": 421850,
+      "currency": "NGN",
+      "phone": "08021234567",
+      "pin": "1234"
+    }
+  ],
+  "transactions": [
+    {
+      "id": "TXN7B017F9F",
+      "from": "240120001",
+      "to": "240120002",
+      "amount": 100,
+      "type": "transfer",
+      "status": "completed",
+      "note": "Phone transfer test",
+      "createdAt": "2026-11-02T21:02:26.568Z"
+    },
+    {
+      "id": "TXNFFCC106A",
+      "from": "240120001",
+      "to": "240120002",
+      "amount": 1250,
+      "type": "transfer",
+      "status": "completed",
+      "note": "Verification transfer",
+      "createdAt": "2026-11-02T20:47:21.277Z"
+    },
+    {
+      "id": "TXN1001",
+      "from": "240120001",
+      "to": "240120002",
+      "amount": 25000,
+      "type": "transfer",
+      "status": "completed",
+      "note": "School fees",
+      "createdAt": "2026-11-01T09:30:00.000Z"
+    },
+    {
+      "id": "TXN1000",
+      "from": "external",
+      "to": "240120001",
+      "amount": 150000,
+      "type": "credit",
+      "status": "completed",
+      "note": "Salary",
+      "createdAt": "2026-10-30T16:10:00.000Z"
+    }
+  ]
+}
